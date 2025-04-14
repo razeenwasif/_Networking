@@ -1,0 +1,16 @@
+
+Test words for the UDP client/server tutorial.
+
+* A long request
+extraterrestrial
+
+* A very long request
+supercalifragilisticexpialidocious
+
+* 16 characters in French
+français préféré
+
+* 10 characters in Mandarin
+好好儿干啊 马到成功
+
+End.

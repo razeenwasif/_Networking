@@ -1,0 +1,41 @@
+The bin folder contains the compiled application
+---
+The cmd dir contains the executables and the entry points of the application, the main one being the 
+api. the migrate folder will contain migrations. The api folder contains anything related from the 
+http to transport layer, 
+handlers, ...essentialy anything server related.
+--- 
+The internal folder contains all the isolated packages. The internal packages are not to be exported to the 
+api server 
+--- 
+the scripts folder contains scripts for setting up the server 
+
+## Separation of concerns:
+  - Each level in the program should be separate by a clear barrier:
+    * the transport layer, the service layer, the storage layer ... 
+
+## Dependency Inversion Principle (DIP)
+  - Injecting the dependencies in the layers instead of durectly calling them
+    (Depend on abstractions first not implementations).
+    These layers are cascading layers, i.e the first layer does not depend or 
+    communicate with the last one.
+  - Promotes loose coupling and makes it easier to test the programs.
+
+## Adaptability to change 
+  - By organizing the code in a moular and flexible way, it is easier to introduce new features, 
+    refactor existing code and responf to evolving business requirements.
+
+  - Systems should be easy to change, instead of having to change a lot of existing code
+    to add new features.
+
+## Layers: Transport -> Service -> Storage 
+The transport layer delivers the message to the users (https, etc.). The transport layer, which
+are the http handlers, will have the layers injected into it which will be the dependencies. 
+They are going to receive the service layer, injected durectly, and inside the service layer, the 
+repository layer will be injected.
+
+The service layer is where the business logic lives.
+
+The storage layer abstracts the communication between the layers above (Transport and Service) 
+and the layers below (Database, mongoDB, SQL database). The storage layer fetches the user from
+a layer above. 
