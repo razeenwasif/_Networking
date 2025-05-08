@@ -34,7 +34,7 @@ deviations.
   - Responses: The client reads response data from the socket into a buffer.
 
   - Termination: The client handles two primary gopher response 
-    Termination methods:
+                 Termination methods:
       1. The server closing the connection (EOF detected on recv / read).
       2. The explicit directory listing terminator (`.\r\n` potentially 
          preceded by another `\r\n`) is detected at the end of the received 
@@ -127,6 +127,18 @@ connection being established. The fourth row is the Gopher
 request for the root directory. The seventh and ninth rows show 
 the server responded followed by the client sending an 
 acknowledge signal to the server.
+
+TCP Handshake (SYN, SYN-ACK, ACK)
+
+Client sending the request (""\r\n) (Likely TCP segment with PSH flag)
+
+Server ACKing the request
+
+Server sending the response data (One or more TCP segments with PSH flag)
+
+Client ACKing the response data
+
+TCP Connection Teardown (FIN/ACK sequences from server and/or client, or RST)
 
 The capture confirms the client initiates a standard TCP 
 connection, sends a correctly formatted Gopher root request 
