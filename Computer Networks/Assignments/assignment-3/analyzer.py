@@ -15,7 +15,7 @@ REQUEST_TOPIC_DELAY = "request/delay"
 REQUEST_TOPIC_MESSAGESIZE = "request/messagesize"
 REQUEST_TOPIC_INSTANCECOUNT = "request/instancecount"
 REQUEST_TOPIC_GO = "request/go"
-DATA_TOPIC_WILDCARD = "ctr/#"
+DATA_TOPIC_WILDCARD = "counter/#"
 SYS_TOPICS_TO_MONITOR = [
     "$SYS/broker/load/messages/received/1min",
     "$SYS/broker/load/messages/sent/1min",
@@ -66,6 +66,16 @@ def on_message_analyzer(client, userdata, msg):
     """
     global RECEIVED_PUBLISHER_MSGS, RECEIVED_SYS_MSGS 
     current_time_ms = int(time.time() * 1000)
+    
+    # ---->> DEBUGGING <<---- 
+    #decoded_payload = 'N/A (Error decoding)'
+    #try:
+    #    decoded_payload = msg.payload.decode()
+    #except Exception as e:
+    #    decoded_payload = f"DECODE_ERROR: {e}"
+
+    #print(f"DEBUG Analyzer on_message: Topic='{msg.topic}', QoS={msg.qos}, Retain={msg.retain}, Payload='{decoded_payload}'")
+    # ---->> End DEBUGGING <<---- 
 
     try:
         payload_str = msg.payload.decode()
@@ -73,7 +83,8 @@ def on_message_analyzer(client, userdata, msg):
         payload_str = "Error decoding payload (binary?)"
         print(f"Analyzer: Warning - UnicodeDecodeError for payload on topic {msg.topic}")
 
-    if msg.topic.startswith("ctr/"):
+    if msg.topic.startswith("counter/"):
+        #print(f"DEBUG Analyser on_message: Matched 'counter/' topic: '{msg.topic}'. Processing...")
         parts = msg.topic.split('/')
         payload_parts = payload_str.split(':', 2)
 
@@ -104,7 +115,7 @@ def on_message_analyzer(client, userdata, msg):
             "payload": payload_str,
             "analyzer_timestamp_received": current_time_ms 
         }
-        received_sys_messages.append(sys_data)
+        RECEIVED_SYS_MSGS.append(sys_data)
 
 def publish_control_messages(client, pub_qos, pub_delay, pub_msg_size, pub_instance_count):
     """
@@ -176,7 +187,22 @@ def calculate_stats(test_params):
         dict: A dictionary where keys are metric names and values are the calculated 
               statistics for the current test run.
     """
-    global RECEIVED_PUBLISHER_MSGS, RECEIVED_SYS_MSGS 
+    global RECEIVED_PUBLISHER_MSGS, RECEIVED_SYS_MSGS
+
+    # ------------------------------------------------ 
+    print(f"\n---- calculate_statistics for Test Params: {test_params} ----")
+    print(f"Raw RECEIVED_PUBLISHER_MSGS (first 5 or all if short):")
+    if len(RECEIVED_PUBLISHER_MSGS) > 5:
+        for i in range(5): 
+            print(RECEIVED_PUBLISHER_MSGS[i])
+        print(f" ... and {len(RECEIVED_PUBLISHER_MSGS) - 5} more messages")
+    else:
+        for msg_data in RECEIVED_PUBLISHER_MSGS:
+            print(msg_data)
+    print(f"Total publisher messages received for this test: {len(RECEIVED_PUBLISHER_MSGS)}")
+    print(f"Raw RECEIVED_SYS_MSGS: {RECEIVED_SYS_MSGS}")
+    print("----------------------------------------------------------------")
+    # ------------------------------------------------
 
     total_msgs_received_by_analyzer = len(RECEIVED_PUBLISHER_MSGS)
     mean_total_rate_mps = total_msgs_received_by_analyzer / TEST_DURATION_SECONDS if TEST_DURATION_SECONDS > 0 else 0 
@@ -251,7 +277,7 @@ def calculate_stats(test_params):
 
         # Duplicate messages 
         ctr_occurrences = defaultdict(int)
-        for msg in sorted_pub_messages_by_ctr:
+        for msg in sorted_pub_msgs_by_ctr:
             ctr_occurrences[msg["payload_ctr"]] += 1 
         duplicate_count_this_pub = 0 
 
@@ -303,7 +329,7 @@ def calculate_stats(test_params):
     # store last seen val for each monitored $SYS topic during the test period
     processed_sys_metrics = {}
     sys_data_by_topic = defaultdict(list)
-    for sys_msg in received_sys_messages:
+    for sys_msg in RECEIVED_SYS_MSGS:
         sys_data_by_topic[sys_msg["topic"]].append(sys_msg["payload"])
 
     for topic_key in SYS_TOPICS_TO_MONITOR:
@@ -406,7 +432,8 @@ def main_analyzer():
         return 
 
     test_run_ctr = 0 
-    is_first_csv_write = True 
+    is_first_csv_write = True
+
 
     for analyzer_qos_level in analyzer_subscription_qos_levels:
         client.user_data_set({"current_analyzer_qos": analyzer_qos_level})
@@ -473,30 +500,6 @@ def main_analyzer():
 if __name__ == '__main__':
     main_analyzer() 
 
-
-
-
-# --- TODO List ---
-# 1.  [CRITICAL] `calculate_statistics`: Thoroughly test and validate all metric calculations against expected behaviors and small, controlled test cases.
-#     *   Loss: "Expected messages" for 0ms delay needs robust definition. Current logic uses max counter seen.
-#     *   Out-of-Order: The current definition ("smaller number after a larger number" in arrival stream) should be double-checked against assignment intent.
-#     *   Inter-Message Gap: Ensure it's strictly for *consecutive* payload counters as per assignment.
-# 2.  `calculate_statistics`: $SYS data processing is basic (last value). Enhance if more sophisticated analysis (e.g., average, min/max over test period) is needed for the report.
-# 3.  Broker Behavior for Analyser QoS Change: The assignment mentions analyser client disconnect/reconnect might be needed for subscription QoS changes.
-#     Current code only re-subscribes. Test this with your chosen broker. If issues, implement full disconnect/reconnect of the analyser client
-#     when `analyser_qos_level` changes in `main_analyser`.
-# 4.  Error Handling: Add more specific error handling within `calculate_statistics` if data is malformed or missing.
-# 5.  Configuration: Consider moving `SYS_TOPICS_TO_MONITOR` and other configs to a separate `config.py` or JSON file for easier modification.
-# 6.  Resource Management: Ensure threads are always joined and resources cleaned up, especially on unexpected exits. (Current version is okay, but review).
-# 7.  Clarity of Output: Refine print statements for better real-time monitoring during the long test sequence.
-# 8.  CSV Field Order: For Python < 3.7, `dict.keys()` order is not guaranteed. If compatibility is needed, explicitly define `fieldnames` for `csv.DictWriter`
-#     using a list to ensure consistent column order in the CSV. (Python 3.7+ maintains insertion order for dicts).
-# 9.  Wireshark: This script does not perform Wireshark captures. This is a manual task for the report, focusing on QoS handshakes.
-# 10. Performance of Analyser: For very high message rates, the single `on_message_analyser` callback might become a bottleneck.
-#     For this assignment's scope, it's likely fine, but be aware if issues arise with extremely fast 0ms delay tests.
-#     (Python's GIL means true parallelism for CPU-bound tasks in one process is limited).
-# 11. Publisher `stop` command: The `stop_publishers_command(client)` is currently commented out. If publishers don't reliably stop after 30s
-#     on their own (e.g., due to timing drift or implementation), uncommenting this might be useful to signal them to cease sending before the next test begins.
 
 
 
