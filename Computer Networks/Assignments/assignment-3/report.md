@@ -95,6 +95,8 @@ Consequently, the analysis below primarily focuses on data from 15 tests where m
 
 ## Throughput (Mean Messages per Second Received by Analyzer)
 Throughput was measured as the number of messages successfully received by the analyser per second.
+- **Effect of Publisher Delay:**
+    - Tests with `Publisher_delay_ms = 100ms` resulted in significantly lower and more stable throughput compared to `Publisher_delay_ms = 0ms`. For instance, with Analyzer QoS 0, Publisher QoS 0, 0 byte message size, and 1 publisher instance, the throughput was consistently around **9.97 mps** (e.g., rows 4, 6 in the dataset). This scaled with active publishers; with 3 instances under the same conditions (row 5), throughput reached approximately **29.9 mps**.
 
 
 # Discussion
