@@ -56,26 +56,30 @@ Packet captures were performed using Wireshark (filtered for MQTT traffic) to ex
 ## Wireshark Analysis of MQTT QoS Handshakes
 
 - **QoS 0:**
-    -  (-- insert screenshots --)
-    -  **Observation:** The publisher sends a PUBLISH message to the broker. The broker, in turn, sends a PUBLISH message to the subscribed analyzer. No explicit acknowledgments are involved at the MQTT level for the message derlivery itself. This results in the lowest overhead but offers no guarantee of delivery.
+    -  ![QoS0](./assets/QoS0.png)
+    -  **Observation:** This capture illustrates a typical MQTT Quality of Service (QoS) 0 message flow.
+          - Packets 4 & 6 show the client (::1) establishing a connection with the broker (::1) via Connect Command and Connect Ack.
+          - Packets 8 & 9 show the client subscribing to a topic (test/qos0) and the broker acknowledging the subscription (Subscribe Ack).
+          - Packets 18 & 19 demonstrate the core of QoS 0: the client sends two Publish Message packets to the topic test/qos0. Crucially, there are no subsequent MQTT-level acknowledgements from the broker specifically for these individual publish messages. This "fire and forget" mechanism offers the lowest overhead but no delivery guarantee.
+          - Packets 22 & 27 show Disconnect Req, and packets 32 & 33 show a Ping Request and Ping Response
 
 - **QoS 1:**
-    -  (-- insert screenshots --)
-    -  **Observation:**
-          1. Publisher sends PUBLISH (Packet ID: P1) to Broker.
-          2. Broker receives, stores, and sends PUBACK (Packet ID: P1) back to Publisher.
-          3. Broker sends PUBLISH (Packet ID: B1, potentially different from P1) to Analyzer.
-          4. Analyzer receives and sends PUBACK (Packet ID: B1) back to Broker.
+    -  ![QoS1](./assets/QoS1.png)
+    -  **Observation:** This capture details an MQTT Quality of Service (QoS) 1 message exchange, guaranteeing "at least once" delivery.
+          1. Similar to QoS 0, initial packets involve Connect and Subscribe sequences (packets 19-24 show a connect/subscribe sequence for test/qos1).
+          2. Packets 33 & 34 show the client publishing two messages to the topic test/qos1.
+          3. For each Publish Message sent by the client (packet 33), the broker responds with a Publish Ack (PUBACK) (packet 36 for message ID=1 from packet 33, and packet 38 for message ID=1 from packet 34). The PUBACK confirms that the broker has received and accepted responsibility for the message. If the publisher does not receive a PUBACK, it will resend the PUBLISH message (with the DUP flag set).
+          4. Packet 40 shows a Disconnect Req.
     - This ensures the message is delivered at least once. If acknowledgements are lost, retransmissions (with DUP flag set) can occur, potentially leading to duplicate message delivery at the application layer if not handled by the subscriber.
 
 - **QoS 2:**
-    -  (-- insert screenshots --)
-    -  **Observation:** A four-part handshake ensures exactly-once delivery semantics:
-          1. Publisher sends PUBLISH (Packet ID: P1) to Broker.
-          2. Broker receives, stores, and sends PUBREC (Publish Received, Packet ID: P1) to Publisher.
-          3. Publisher receives PUBREC, discards its copy of the original PUBLISH, stores P1, and sends PUBREL (Publish Release, Packet ID: P1) to Broker.
-          4. Broker receives PUBREL, delivers the message to the Analyzer (this internal delivery to the analyzer also involves a QoS 2 handshake if the analyzer subscribed at QoS 2), discards its stored state for P1, and sends PUBCOMP (Publisher Complete, Packet ID: P1) to Publisher.
-          5. Publisher receives PUBCOMP and discards its stored state for P1.
+    -  ![QoS2](./assets/QoS2.png)
+    -  **Observation:** This capture illustrates the four-part handshake of an MQTT Quality of Service (QoS) 2 message exchange, ensuring "exactly once" delivery.
+          1. Following connection and subscription (packets 6-9 for test/qos2), the QoS 2 flow for a single message begins.
+          2. Packet 18: Client sends Publish Message (ID=1) to the broker.
+          3. Packet 19: Broker responds with Publish Received (PUBREC) (ID=1), confirming it has received and stored the message, and is responsible for it.
+          4. Packet 21: Client, upon receiving PUBREC, sends Publish Release (PUBREL) (ID=1), instructing the broker to deliver the message and confirming it will not resend this PUBLISH.
+          5. Packet 24: Broker, after successfully processing/delivering the message, responds with Publish Complete (PUBCOMP) (ID=1), informing the publisher that the transaction for this message is complete.
     - This is the most reliable but highest overhead QoS level, designed to prevent both message loss and duplication.
 
 # Implications for Message Duplication and Order:
@@ -97,7 +101,86 @@ Consequently, the analysis below primarily focuses on data from 15 tests where m
 Throughput was measured as the number of messages successfully received by the analyser per second.
 - **Effect of Publisher Delay:**
     - Tests with `Publisher_delay_ms = 100ms` resulted in significantly lower and more stable throughput compared to `Publisher_delay_ms = 0ms`. For instance, with Analyzer QoS 0, Publisher QoS 0, 0 byte message size, and 1 publisher instance, the throughput was consistently around **9.97 mps** (e.g., rows 4, 6 in the dataset). This scaled with active publishers; with 3 instances under the same conditions (row 5), throughput reached approximately **29.9 mps**.
+    - For `Publisher_delay_ms = 0ms`, `Publisher_msg_size_bytes = 0`, and a single publisher instance (row 8), a peak sustained throughput of **6973.3 mps** was recorded by the analyzer. This demonstrates the high potential message rate for a single, unconstrained publisher sending small messages.
+      ![Mean Throughput vs. Publisher Instances by Publisher QoS](./assets/throughput-analysis01.png)
+ 
+- **Effect of Number of Publisher Instances (at 0ms delay):**
+    - When message size was 0 bytes and publisher QoS was 0:
+      - 1 Instance (row 8): ~6973 mps
+      - 5 Instances (row 9): ~9746 mps (aggregate). While higher than 1 instance, it's not a 5x scaling, suggesting system contention or broker limits are being approached.
+      - 10 Instances (row 10): ~8658 mps (aggregate). Throughput decreased compared to 5 instances, strongly indicating that the system (broker or test machine) was overloaded.
 
+- **Effect of Message Size (at 0ms delay, 1 Publisher Instance, PuBQoS 0):**
+    - 0 bytes (row 8): ~6973 mps
+    - 1000 bytes (row 11): ~5445 mps
+    - As message size increased, throughput decreased, which is expected due to the higher overhead of processing and transmitting larger messages. Tests with 4000 byte messages at 0ms delay (rows 14-16) resulted in 0 messages received due to system limitations.
+      ![Mean Throughput vs. Message Size by Publisher QoS and Delay](./assets/throughput-analysis02.png)
+
+- **Effect of QoS Levels on Throughput (100ms delay):**
+    - Comparing rows 4 (Analyzer QoS 0, Pub QoS 0, ~9.97mps) and the "AnalyzerQoSChangeTest" rows 6 (AQoS0, PQoS0, ~9.97 mps) and row 7 (AQoS2, PQoS0, ~9.97 mps), the analyzer's subscription QoS had a negligible impact on the application message throughput received from a QoS 0 publisher in this stable 100ms delay scenario.
+ 
+## Message Loss
+Message loss was calculated based on the highest message counter received from each publisher versus the number of unique messages received from it.
+
+- **Delay=100ms Tests:**
+    - For the reliable tests shown (rows 4, 5, 6, 7), message loss was consistently 0.0%. This indicates excellent reliability when the message rate was constrained.
+    - However, a large number of subsequent 100ms delay tests (rows 17-25) showed 100% loss. This is unexpected for 100ms delay and suggests that the system had entered a persistent failure state after the initial high-load 0ms delay tests, likely due to RAM exhaustion not fully recovering or processes not restarting/reconnecting correctly.
+- **Delay=0ms Tests:**
+    - 1 Instance, 0 byte messages (row 8): **0.217% loss**.
+    - 5 Instances, 0 byte messages (row 9): **66.165% loss**. Loss increased dramatically.
+    - 10 Instances, 0 byte messages (row 10): **65.206% loss**. Similar high loss.
+    - 1 Instance, 1000 byte messages (row 11): **56.35% loss**.
+    - These indicate that even before total system RAM exhaustion (which led to 100% loss in rows 12-16), the 0ms delay tests were already experiencing significant message loss, likely due to broker or client-side Paho MQTT buffers overflowing or network stack drops under extreme load.
+![Avg Message Loss vs Publisher QoS](./assets/loss01.png)
+![Avg Message Loss by Analyzer QoS, PubQoS and delay](./assets/loss02.png)
+
+## Out-of-Order Messages
+- **Delay=100ms Tests:** In the reliable tests (rows 4, 5, 6, 7), out-of-order messages were 0.0%.
+- **Delay=0ms Tests:**
+    - 1 Instance, 0 byte messages (row 8): **0.001%**
+    - 5 Instances, 0 byte messages (row 9): **0.003%**
+    - 10 Instances, 0 byte messages (row 10): **29.693%**. This is a very high percentage, indicating significant message reordering when 10 publishers sent small messages at maximum speed (QoS 0).
+    - 1 Instance, 1000 byte messages (row 11): **0.0%**
+    - Row 64 (AQoS2, PQoS0, Delay=0, MsgSize=1000, Inst=1): **71.994%**. This exceptionally high OOO rate for a single publisher (even though sending PuBQoS 0) suggests severe processing delays or reordering within the broker or network path under the load of large messages at high speed, despite the analyzer attempting a QoS 2 subscription.
+- **General Trend:** Out-of-order messages were primarily observed in high-load, 0ms delay scenarios, particularly with a higher number of publishers.
+![out of order percentage (loss < 100% tests)](./assets/ooo.png)
+
+## Duplicate Messages
+- Across the provided data snippet, duplicate messages were extremely rare. Only row 70 (AQoS=1, PQoS=0, Delay=0, MsgSize=1000, Inst=5) showed a minor 0.079%.
+- Duplicates are an expected behavior primarily with Publisher QoS 1 if acknowledgements (PUBACKs) are lost, prompting re-transmissions. The observed duplicate with Publisher QoS 0 is anomalous and could be due to a rare network-level event or a broker-side hiccup under the specific high load of that test.
+
+## Inter-Message Gap
+- **Delay=100ms tests:**
+    - Rows 4, 6, 7 (1 Instance): Average gap was consistently ~100.35ms with a very low standard deviation (~0.6ms). This accurately reflects the publisher's configured inter-send delay with minimal jitter.
+    - Row 5 (3 Instances): Average gap remained ~100.348ms with a slightly higher but still low std dev (~0.777ms), indicating consistent delivery timing even with more publishers at this constrained rate.
+- **Delay=0ms tests:**
+    - Row 8 (1 Inst, Size 0): Average gap ~0.05ms (StdDev ~0.248ms). Extremely rapid message arrival.
+    - Row 10 (10 Inst, Size 0): Average gap increased to ~1.197ms with a very large StdDev of ~18.33ms. This high variability and larger average gap (compared to 1 instance) correlates with the high out-of-order percentage and overall system stress.
+    - Row 11 (1 Inst, Size 1000): Average gap ~0.054ms (StdDev ~0.236ms).
+    - Row 64 (AQoS2, PQoS0, Delay=0, MsgSize=1000, Inst=1): Average gap ~0.053ms (StdDev ~0.249ms), despite extremely high OOO. This indicates that when messages did arrive consecutively, they did so quickly.
+
+## Correlation with $SYS Topics 
+- **Broker Message Load:**
+    - A positive correlation was observed between the application-level Mean_total_rate_mps_analyzer and the broker's reported messages sent/received per minute. For example, in row 4 (1 instance, 100ms delay, ~10mps), SYS_load_messages_sent_1min_last was ~544. In row 5 (3 instances, 100ms delay, ~30mps), it increased to ~1187.
+    - During high-throughput 0ms delay tests (e.g., row 8, ~6973 mps), SYS_load_messages_sent_1min_last was exceptionally high at ~273,483.
+    - The "AnalyserQoSChangeTest" (rows 6 and 7) showed that when the Analyser subscribed with QoS 2 (row 7, SYS_load_messages_sent_1min_last ~712) versus QoS 0 (row 6, SYS_load_messages_sent_1min_last ~454), the broker reported a higher number of messages sent, reflecting the additional MQTT control packets (PUBREC, PUBREL, PUBCOMP) required to service the QoS 2 subscription, even though the application message rate was the same.
+![Throughput vs. Broker Messages sent (SYS)](./assets/SYS.png)
+![Correlation Matrix of Selected Metrics](./assets/corr_matrix.png)
+
+- **Active Clients and Subscriptions:**
+    - These metrics generally increased as more publisher instances were configured to be active, as expected. For instance, SYS_clients_active_last was 3 for 1 publisher (row 4) and increased to 5 for 3 publishers (row 5). For tests with 10 active publishers, it reached 12 (row 8). Similar trends were seen for subscription counts.
+- **Messages Stored:**
+    - This was 'N/A' for most tests in the snippet where $SYS data was available, then showed values like 53, 55, 56, 64 for some high-load 0ms delay tests (rows 62, 63, 64, 70). An increase here suggests the broker is queuing messages, potentially due to inability to deliver them as fast as they are received, which can be an indicator of overload.
+- **Missing $SYS Data:** For a large portion of the tests that failed due to RAM capping (rows 12 onwards, and then most tests from row 17), the $SYS topic data was reported as 'N/A'. This strongly indicates that either the broker was too overwhelmed to publish its $SYS updates, or the analyser itself was unable to subscribe to or process these $SYS messages during those periods of system instability.
+
+## System Limitations
+As previously stated, the most significant factor impacting the test results for high-load scenarios (Publisher_delay_ms = 0, high instance counts, large message sizes) was the exhaustion of system RAM. 
+Tests consistently failed (0 messages received, 100% loss, 'N/A' for many $SYS topics) when these demanding parameters were combined. For example, with 0ms delay, Publisher QoS 0:
+- 5 Instances, 1000 byte messages (row 12)
+- 10 Instances, 1000 byte messages (row 13)
+- 1, 5, or 10 Instances, 4000 byte messages (rows 14, 15, 16)
+This demonstrates a clear boundary condition of the test environment. While MQTT itself might handle higher rates, the supporting system (Paho clients, Python runtime, Mosquitto broker on the given hardware, OS networking stack) could not sustain the memory pressure generated by the extremely rapid creation and buffering of messages by multiple publishers.
+The successful 0ms delay tests (e.g., 1 publisher, 0-byte messages achieving ~7000 mps) show the potential before this RAM limit is breached.
 
 # Discussion
 ## Performance Challenges in Large-Scale Deployments
@@ -166,7 +249,9 @@ This experimental investigation provided valuable insights into MQTT performance
 This study demonstrated that while MQTT is a lightweight and efficient protocol, its practical application performance is heavily influenced by the chosen operational parameters, the underlying system resources, and the specific capabilities of the MQTT broker implementation. Careful consideration of these factors is essential when designing and deploying large-scale IoT solutions based on MQTT.
 
 
-
+# Bibliography
+[1] MQTT Version 3.1.1. Available at: https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html (Accessed: 11 May 2025). 
+[2] 
 
 
 
